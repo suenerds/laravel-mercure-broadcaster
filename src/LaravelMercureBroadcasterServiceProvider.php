@@ -1,14 +1,16 @@
-<?php declare(strict_types = 1);
+<?php
+
+declare(strict_types=1);
 
 namespace Suenerds\LaravelMercureBroadcaster;
 
-use Illuminate\Foundation\Application;
-use Suenerds\LaravelMercureBroadcaster\Broadcasting\Broadcasters\MercureBroadcaster;
 use Illuminate\Broadcasting\BroadcastManager;
+use Illuminate\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
 use Lcobucci\JWT\Configuration;
 use Lcobucci\JWT\Signer\Hmac\Sha256;
 use Lcobucci\JWT\Signer\Key\InMemory;
+use Suenerds\LaravelMercureBroadcaster\Broadcasting\Broadcasters\MercureBroadcaster;
 use Symfony\Component\Mercure\Authorization;
 use Symfony\Component\Mercure\Hub;
 use Symfony\Component\Mercure\HubInterface;
@@ -20,26 +22,27 @@ use Symfony\Component\Mercure\Jwt\TokenProviderInterface;
 
 class LaravelMercureBroadcasterServiceProvider extends ServiceProvider
 {
-    public function boot()
+    public function boot(): void
     {
         $this->app
             ->make(BroadcastManager::class)
             ->extend('mercure', function ($app, array $config) {
                 $hub = $app->make(HubInterface::class);
+
                 return new MercureBroadcaster(
                     hub: $hub,
                     authorization: new Authorization(
-                        registry: new HubRegistry( defaultHub: $hub )
+                        registry: new HubRegistry(defaultHub: $hub)
                     ),
                 );
             });
     }
 
-    public function register()
+    public function register(): void
     {
         $this->app->singleton('suenerds.mercure_broadcaster.publisher_jwt', function () {
             $jwtConfiguration = Configuration::forSymmetricSigner(
-                new Sha256(),
+                new Sha256,
                 InMemory::plainText(config('broadcasting.connections.mercure.secret'))
             );
 

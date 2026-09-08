@@ -1,9 +1,11 @@
-<?php declare(strict_types = 1);
+<?php
 
-namespace Duijker\LaravelMercureBroadcaster\Tests\Support;
+declare(strict_types=1);
 
-use Duijker\LaravelMercureBroadcaster\Broadcasting\Channel;
+namespace Suenerds\LaravelMercureBroadcaster\Tests\Support;
+
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
+use Suenerds\LaravelMercureBroadcaster\Broadcasting\Channel;
 
 class ExampleEvent implements ShouldBroadcastNow
 {
@@ -17,8 +19,7 @@ class ExampleEvent implements ShouldBroadcastNow
     public function broadcastOn()
     {
         return new Channel(
-            "http://example/event",
-            true
+            'http://example/event',
         );
     }
 }

@@ -1,6 +1,8 @@
-<?php declare(strict_types = 1);
+<?php
 
-namespace Duijker\LaravelMercureBroadcaster\Tests\Support;
+declare(strict_types=1);
+
+namespace Suenerds\LaravelMercureBroadcaster\Tests\Support;
 
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
@@ -17,7 +19,7 @@ class ExamplePrivateChannelEvent implements ShouldBroadcastNow
     public function broadcastOn()
     {
         return new PrivateChannel(
-            "http://example/private-channel-event",
+            'http://example/private-channel-event',
         );
     }
 }

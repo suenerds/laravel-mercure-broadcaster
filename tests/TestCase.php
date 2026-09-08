@@ -1,8 +1,10 @@
-<?php declare(strict_types = 1);
+<?php
 
-namespace Duijker\LaravelMercureBroadcaster\Tests;
+declare(strict_types=1);
 
-use Duijker\LaravelMercureBroadcaster\LaravelMercureBroadcasterServiceProvider;
+namespace Suenerds\LaravelMercureBroadcaster\Tests;
+
+use Suenerds\LaravelMercureBroadcaster\LaravelMercureBroadcasterServiceProvider;
 
 class TestCase extends \Orchestra\Testbench\TestCase
 {
@@ -15,7 +17,7 @@ class TestCase extends \Orchestra\Testbench\TestCase
     }
 
     /**
-     * @inheritDoc
+     * {@inheritDoc}
      */
     protected function getPackageProviders($app)
     {

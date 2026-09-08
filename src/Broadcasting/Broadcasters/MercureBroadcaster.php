@@ -1,10 +1,15 @@
-<?php declare(strict_types = 1);
+<?php
+
+declare(strict_types=1);
 
 namespace Suenerds\LaravelMercureBroadcaster\Broadcasting\Broadcasters;
 
 use Illuminate\Broadcasting\Broadcasters\Broadcaster;
+use Illuminate\Broadcasting\PrivateChannel as IlluminatePrivateChannel;
 use Illuminate\Http\Request;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Redirect;
+use Suenerds\LaravelMercureBroadcaster\Broadcasting\Channel;
 use Suenerds\LaravelMercureBroadcaster\Broadcasting\PrivateChannel;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\Mercure\Authorization;
@@ -14,15 +19,14 @@ use Symfony\Component\Mercure\Update;
 class MercureBroadcaster extends Broadcaster
 {
     public function __construct(
-        protected HubInterface $hub,
-        protected Authorization $authorization
-    ){
-    }
+        protected readonly HubInterface $hub,
+        protected readonly Authorization $authorization
+    ) {}
 
     /**
      * Authenticate the incoming request for a given channel.
      *
-     * @param  \Illuminate\Http\Request $request
+     * @param  Request  $request
      * @return mixed
      */
     public function auth($request)
@@ -45,8 +49,8 @@ class MercureBroadcaster extends Broadcaster
 
         foreach ($channels as $channel) {
             // Runs the matching callback from routes/channels.php.
-            // Throws AccessDeniedHttpException when no callback matches
-            // or the callback returns false.
+            // Throws AccessDeniedHttpException unless a matching callback
+            // authorizes the channel.
             $this->verifyUserCanAccessChannel($request, $channel);
         }
 
@@ -57,16 +61,16 @@ class MercureBroadcaster extends Broadcaster
     /**
      * Return the valid authentication response.
      *
-     * @param  \Illuminate\Http\Request $request
-     * @param  mixed $result
-     * @return mixed
+     * @param  Request  $request
+     * @param  mixed  $result
      */
     public function validAuthenticationResponse($request, $result): mixed
     {
         $url = $this->hub->getPublicUrl().'?'.implode('&', array_map(
-                fn (string $topic) => 'topic='.rawurlencode($topic),
-                $result,
-            ));
+            fn (string $topic) => 'topic='.rawurlencode($topic),
+            $result,
+        ));
+
         // Mercure does its own implementation of authorization with jwt's
         // You can add targets to Channel class to specify your audience
         return Redirect::to($url)
@@ -81,34 +85,115 @@ class MercureBroadcaster extends Broadcaster
     /**
      * Broadcast the given event.
      *
-     * @param  array $channels
-     * @param  string $event
-     * @param  array $payload
-     * @return void
+     * @param  string  $event
      */
-    public function broadcast(array $channels, $event, array $payload = [])
+    public function broadcast(array $channels, $event, array $payload = []): void
     {
+        $data = $this->formatData($payload);
+
         foreach ($channels as $channel) {
             $this->hub->publish(new Update(
-                topics: $channel->toArray(),
-                data: implode(PHP_EOL, $payload),
-                private: $channel instanceof PrivateChannel,
+                topics: $this->channelTopics($channel),
+                data: $data,
+                private: $channel instanceof PrivateChannel || $channel instanceof IlluminatePrivateChannel,
                 type: $event));
         }
     }
 
+    /**
+     * Format the broadcast payload as the update's SSE data block.
+     *
+     * A list of pre-formatted data lines (e.g. Datastar events, whose
+     * broadcastWith() returns ['selector #foo', 'elements <div>…', …]) is
+     * joined verbatim so each entry becomes its own "data:" line; an
+     * associative payload is JSON-encoded.
+     */
+    protected function formatData(array $payload): string
+    {
+        Arr::pull($payload, 'socket');
 
+        if ($payload !== [] && Arr::isList($payload) && array_filter($payload, 'is_string') === $payload) {
+            return implode("\n", $payload);
+        }
+
+        return json_encode($payload);
+    }
+
+    /**
+     * Resolve the Mercure topics for a channel, which may be one of this
+     * package's channel classes, a native Laravel channel, or a string.
+     *
+     * @param  Channel|PrivateChannel|\Illuminate\Broadcasting\Channel|string  $channel
+     */
+    protected function channelTopics($channel): array
+    {
+        if ($channel instanceof Channel || $channel instanceof PrivateChannel) {
+            return $channel->toArray();
+        }
+
+        $name = (string) $channel;
+
+        // Native private channels prefix the name with "private-", which
+        // would corrupt the topic URI; privacy is conveyed by the update's
+        // private flag instead.
+        if ($channel instanceof IlluminatePrivateChannel && str_starts_with($name, 'private-')) {
+            $name = substr($name, strlen('private-'));
+        }
+
+        return [$name];
+    }
+
+    /**
+     * Determine if the channel name matches the pattern.
+     *
+     * Overrides the base implementation because Mercure topics are URIs:
+     * the base regex uses "/" as its delimiter and leaves literal parts
+     * unquoted, so a channel name containing a slash can never match.
+     *
+     * @param  string  $channel
+     * @param  string  $pattern
+     */
+    protected function channelNameMatchesPattern($channel, $pattern): bool
+    {
+        return (bool) preg_match('#^'.$this->compileChannelPattern($pattern).'$#', $channel);
+    }
+
+    /**
+     * Extract the channel keys from the incoming channel name.
+     *
+     * @param  string  $pattern
+     * @param  string  $channel
+     */
+    protected function extractChannelKeys($pattern, $channel): array
+    {
+        preg_match('#^'.$this->compileChannelPattern($pattern).'#', $channel, $keys);
+
+        return $keys;
+    }
+
+    /**
+     * Compile a channel pattern into a regex body: literal parts are quoted,
+     * {placeholder} segments become named capture groups that stop at "."
+     * and "/" so a parameter cannot span segment boundaries.
+     */
+    protected function compileChannelPattern(string $pattern): string
+    {
+        return preg_replace_callback(
+            '/\\\\\{(.*?)\\\\\}/',
+            fn ($matches) => '(?<'.$matches[1].'>[^/.]+)',
+            preg_quote($pattern, '#')
+        );
+    }
 
     /**
      * Authenticate the incoming request for a given channel.
      *
-     * @param  \Illuminate\Http\Request  $request
+     * @param  Request  $request
      * @param  string  $channel
-     * @return void
      *
-     * @throws \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException
+     * @throws AccessDeniedHttpException
      */
-    protected function verifyUserCanAccessChannel($request, $channel) : void
+    protected function verifyUserCanAccessChannel($request, $channel): void
     {
         foreach ($this->channels as $pattern => $callback) {
             if (! $this->channelNameMatchesPattern($channel, $pattern)) {
@@ -119,12 +204,11 @@ class MercureBroadcaster extends Broadcaster
 
             $handler = $this->normalizeChannelHandlerToCallable($callback);
 
-            $result = $handler($this->retrieveUser($request, $channel), ...$parameters);
-
-            if ($result === false) {
-                throw new AccessDeniedHttpException;
+            if ($handler($this->retrieveUser($request, $channel), ...$parameters)) {
+                return;
             }
         }
-    }
 
+        throw new AccessDeniedHttpException;
+    }
 }

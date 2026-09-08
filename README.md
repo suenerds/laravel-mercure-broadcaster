@@ -1,23 +1,30 @@
 # Laravel Mercure Broadcaster
 
-[![Latest Version on Packagist](https://img.shields.io/packagist/v/mvanduijker/laravel-mercure-broadcaster.svg?style=flat-square)](https://packagist.org/packages/mvanduijker/laravel-mercure-broadcaster)
-![Build status](https://github.com/mvanduijker/laravel-mercure-broadcaster/workflows/Run%20tests/badge.svg)
-[![Total Downloads](https://img.shields.io/packagist/dt/mvanduijker/laravel-mercure-broadcaster.svg?style=flat-square)](https://packagist.org/packages/mvanduijker/laravel-mercure-broadcaster)
-
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/suenerds/laravel-mercure-broadcaster.svg?style=flat-square)](https://packagist.org/packages/suenerds/laravel-mercure-broadcaster)
+![Build status](https://github.com/suenerds/laravel-mercure-broadcaster/workflows/Run%20tests/badge.svg)
+[![Total Downloads](https://img.shields.io/packagist/dt/suenerds/laravel-mercure-broadcaster.svg?style=flat-square)](https://packagist.org/packages/suenerds/laravel-mercure-broadcaster)
 
 Laravel broadcaster for [Mercure](https://github.com/dunglas/mercure) for doing Server Sent Events in a breeze.
 
+- Works with Laravel's native `Channel` and `PrivateChannel` classes
+- Publish one update to multiple topics at once with the package's channel classes
+- JSON payloads for classic events, raw SSE data lines for [Datastar](https://data-star.dev)-style events (e.g. [suenerds/laravel-datastar](https://github.com/suenerds/laravel-datastar))
+- Built-in channel authorization endpoint that redirects the browser's `EventSource` to the hub with a Mercure JWT cookie
+
 ## Installation
 
-Make sure you have installed [Mercure](https://github.com/dunglas/mercure) and have it running. Check their docs how to 
+Requires PHP 8.3+ and Laravel 10 or newer.
+
+Make sure you have installed [Mercure](https://github.com/dunglas/mercure) and have it running. Check their docs how to
 do it. (It's pretty easy)
 
-Install the package via Composer: 
+Install the package via Composer:
+
 ```
 composer require suenerds/laravel-mercure-broadcaster
 ```
 
-Configure laravel to use the Mercure broadcaster by editing `config/broadcasting.php` for example:
+Configure Laravel to use the Mercure broadcaster by editing `config/broadcasting.php`:
 
 ```php
 <?php
@@ -32,7 +39,10 @@ return [
 
         'mercure' => [
             'driver' => 'mercure',
+            // URL your Laravel app uses to publish updates to the hub
             'url' => env('MERCURE_URL', 'http://localhost:3000/.well-known/mercure'),
+            // URL browsers use to subscribe; defaults to `url` when omitted
+            'public_url' => env('MERCURE_PUBLIC_URL'),
             'secret' => env('MERCURE_SECRET', 'aVerySecretKey'),
         ],
 
@@ -43,7 +53,11 @@ return [
 
 ## Usage
 
-Add an event which implements ShouldBroadcast interface like in https://laravel.com/docs/master/broadcasting#defining-broadcast-events
+### Broadcasting events
+
+Add an event which implements the `ShouldBroadcast` interface like in the
+[Laravel broadcasting docs](https://laravel.com/docs/master/broadcasting#defining-broadcast-events).
+Mercure topics are URIs, so use a topic URI as the channel name:
 
 ```php
 <?php
@@ -55,103 +69,65 @@ use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 
 class NewsItemCreated implements ShouldBroadcast
 {
-    /**
-     * @var NewsItem
-     */
-    public $newsItem;
-
-    public function __construct(NewsItem $newsItem)
+    public function __construct(public NewsItem $newsItem)
     {
-        $this->newsItem = $newsItem;
     }
 
     public function broadcastOn()
     {
         return new Channel('http://example/news-items');
     }
+
+    public function broadcastAs(): string
+    {
+        return 'news-item.created';
+    }
 }
 ```
 
-In your frontend do something like:
+Each update is published with an SSE event type: the `broadcastAs()` name, or the event's
+class name if you don't define one. Listen for that type in your frontend — a plain
+`message` listener will not fire for typed events:
 
 ```javascript
-var es = new EventSource('http://localhost:3000/.well-known/mercure?topic=' + encodeURIComponent('http://example/news-items'));
-es.addEventListener('message', (messageEvent) => {
-    var eventData = JSON.parse(messageEvent.data);
+const url = 'http://localhost:3000/.well-known/mercure?topic=' + encodeURIComponent('http://example/news-items');
+const es = new EventSource(url);
+es.addEventListener('news-item.created', (messageEvent) => {
+    const eventData = JSON.parse(messageEvent.data);
     console.log(eventData);
 });
 ```
 
+### Publishing to multiple topics
 
-Private channels go a bit differently than with broadcasting through sockets. Private channels are baked in Mercure and
-are secured with a jwt token.
-
-First create a http middleware, so we can generate the Mercure authentication cookie with the token. 
-Don't forget to add the middleware to your route!
-
-Example:
+Laravel's channel classes carry a single topic. To publish one update to several topics,
+use this package's channel classes instead:
 
 ```php
-<?php 
+use Suenerds\LaravelMercureBroadcaster\Broadcasting\Channel;
 
-namespace App\Http\Middleware;
-
-use Closure;
-use Illuminate\Http\Request;
-use Illuminate\Http\Response;
-use Illuminate\Support\Facades\Cookie;
-use Lcobucci\JWT\Configuration;
-use Lcobucci\JWT\Signer\Hmac\Sha256;
-use Lcobucci\JWT\Signer\Key\InMemory;
-
-class MercureBroadcasterAuthorizationCookie
+public function broadcastOn()
 {
-    public function handle(Request $request, Closure $next)
-    {
-        /** @var Response $response */
-        $response = $next($request);
-
-        if (!method_exists($response, 'withCookie')) {
-            return $response;
-        }
-
-        return $response->withCookie($this->createCookie($request->user(), $request->secure()));
-    }
-
-    private function createCookie($user, bool $secure)
-    {
-        // Add topic(s) this user has access to
-        // This can also be URI Templates (to match several topics), or * (to match all topics)
-        $subscriptions = [
-            "http://example/user/{$user->id}/direct-messages",
-        ];
-
-        $jwtConfiguration = Configuration::forSymmetricSigner(
-            new Sha256(),
-            InMemory::plainText(config('broadcasting.connections.mercure.secret'))
-        );
-
-        $token = $jwtConfiguration->builder()
-            ->withClaim('mercure', ['subscribe' => $subscriptions])
-            ->getToken($jwtConfiguration->signer(), $jwtConfiguration->signingKey())
-            ->toString();
-
-        return Cookie::make(
-            'mercureAuthorization',
-            $token,
-            15,
-            '/.well-known/mercure', // or which path you have mercure running
-            parse_url(config('app.url'), PHP_URL_HOST),
-            $secure,
-            true
-        );
-    }
+    return new Channel([
+        'http://example/news-items',
+        "http://example/authors/{$this->newsItem->author_id}/news-items",
+    ]);
 }
 ```
 
-Because Laravel encrypts and decrypts cookies by default, don't forget to add an [exception](https://laravel.com/docs/9.x/responses#cookies-and-encryption) for the `mercureAuthorization` cookie in `App\Http\Middleware\EncryptCookies`.
+`Suenerds\LaravelMercureBroadcaster\Broadcasting\PrivateChannel` does the same for private
+updates.
 
-Example event:
+### Payload formats
+
+The broadcast payload (your event's public properties, or whatever `broadcastWith()`
+returns) is serialized in one of two ways:
+
+- An **associative array** is JSON-encoded — decode it with `JSON.parse` as shown above.
+- A **list of strings** is joined verbatim, each entry becoming its own `data:` line of
+  the SSE event. This is what [Datastar](https://data-star.dev) expects, so events using
+  the traits from [suenerds/laravel-datastar](https://github.com/suenerds/laravel-datastar)
+  broadcast correctly out of the box:
 
 ```php
 <?php
@@ -160,45 +136,105 @@ namespace App\Events;
 
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\View\View;
+use Suenerds\LaravelDatastar\IsPatchElementsEvent;
 
-class DirectMessageCreated implements ShouldBroadcast
+class OrderShipped implements ShouldBroadcast
 {
-    /**
-     * @var DirectMessage
-     */
-    public $directMessage;
+    use IsPatchElementsEvent;
 
-    public function __construct(DirectMessage $directMessage)
+    public function __construct(public Order $order)
     {
-        $this->directMessage = $directMessage;
     }
 
     public function broadcastOn()
     {
-        return new PrivateChannel(
-            "http://example/user/{$this->directMessage->user_id}/direct-messages", 
-        );
+        return new PrivateChannel("http://example/user/{$this->order->user_id}/orders");
+    }
+
+    public function elements(): View
+    {
+        return view('orders.card', ['order' => $this->order]);
     }
 }
 ```
 
-Example Frontend:
+### Private channels
+
+Private channels are baked into Mercure and secured with a JWT cookie. Events broadcast
+on a `PrivateChannel` (Laravel's or this package's) are published as private updates, and
+the hub only delivers them to subscribers whose JWT grants the topic.
+
+First, authorize your channels in `routes/channels.php` — exactly like any other Laravel
+broadcaster. A channel is denied unless a matching callback returns a truthy value.
+Placeholders such as `{id}` match a single segment; they stop at `.` and `/`:
+
+```php
+use Illuminate\Support\Facades\Broadcast;
+
+Broadcast::channel('http://example/user/{id}/direct-messages', function ($user, $id) {
+    return (int) $id === $user->id;
+});
+```
+
+Then register a route for the authorization endpoint:
+
+```php
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Broadcast;
+use Illuminate\Support\Facades\Route;
+
+Route::get('/broadcasting/auth', fn (Request $request) => Broadcast::driver('mercure')->auth($request))
+    ->middleware(['web', 'auth']);
+```
+
+The endpoint accepts the requested channels as a `channels[]` array or a comma-separated
+`channels` query string. It authorizes each channel, then responds with a redirect to the
+hub's public URL (with a `topic` parameter per channel) and sets a `mercureAuthorization`
+cookie granting exactly those topics. An `EventSource` follows that redirect, so your
+frontend can subscribe straight through the endpoint:
 
 ```javascript
-var es = new EventSource('http://localhost:3000/.well-known/mercure?topic=' + encodeURIComponent('http://example/user/1/direct-messages'), { withCredentials: true });
-es.addEventListener('message', (messageEvent) => {
-    var eventData = JSON.parse(messageEvent.data);
+const url = '/broadcasting/auth?channels=' + encodeURIComponent('http://example/user/1/direct-messages');
+const es = new EventSource(url, { withCredentials: true });
+es.addEventListener('direct-message.created', (messageEvent) => {
+    const eventData = JSON.parse(messageEvent.data);
     console.log(eventData);
 });
 ```
 
+Two things to watch out for:
+
+- Because Laravel encrypts cookies by default, add an
+  [exception](https://laravel.com/docs/master/responses#cookies-and-encryption) for the
+  `mercureAuthorization` cookie in your cookie encryption configuration.
+- The cookie can only be set when the hub's public URL shares a second-level domain with
+  your app (e.g. `app.example.com` and `mercure.example.com`). With the hub on an
+  unrelated domain, the underlying Symfony component refuses to create the cookie.
+
 ### Advanced usage
 
-If you want to generate your own JWT, you can do it by overriding the `mvanduijker.mercure_broadcaster.publisher_jwt` service. 
-You want to do this if you want to have custom claims, using other signing algorithms, etc. It expects a string back containing the JWT.
-Example how the default JWT is generated: https://github.com/mvanduijker/laravel-mercure-broadcaster/blob/master/src/LaravelMercureBroadcasterServiceProvider.php#L32
+The service provider registers its collaborators with `singletonIf`, so any binding you
+define in your application wins over the package default:
 
-Make sure you also make the changes in the cookie middleware.
+- `Symfony\Component\Mercure\HubInterface` — the hub itself (also aliased to
+  `Symfony\Component\Mercure\Hub` and `mercure.hub`)
+- `Symfony\Component\Mercure\Jwt\TokenProviderInterface` — provides the JWT used to
+  publish updates
+- `Symfony\Component\Mercure\Jwt\TokenFactoryInterface` — creates the subscriber JWTs
+  for authorization cookies
+
+If you only want to customize the publisher JWT (custom claims, another signing
+algorithm, …), override the `suenerds.mercure_broadcaster.publisher_jwt` service; it must
+resolve to a JWT string. See
+[`LaravelMercureBroadcasterServiceProvider`](src/LaravelMercureBroadcasterServiceProvider.php)
+for how the default is generated.
+
+```php
+$this->app->singleton('suenerds.mercure_broadcaster.publisher_jwt', function () {
+    return MyJwtBuilder::publisherToken();
+});
+```
 
 ### Further reading
 
@@ -207,12 +243,12 @@ Make sure you read the documentation of Mercure and how to run it securely (behi
 * [Mercure documentation](https://github.com/dunglas/mercure)
 * [Symfony integration document](https://symfony.com/doc/current/mercure.html)
 
-
-
 ### Testing
 
 ```bash
-composer test
+composer test                                # full suite; needs a running Docker daemon
+vendor/bin/phpunit --exclude-group docker    # fast suite, no Docker required
+composer lint                                # code style
 ```
 
 ### Changelog
@@ -223,9 +259,12 @@ Please see [CHANGELOG](CHANGELOG.md) for more information on what has changed re
 
 Please see [CONTRIBUTING](CONTRIBUTING.md) for details.
 
-
 ## Credits
 
+This package started as a fork of
+[mvanduijker/laravel-mercure-broadcaster](https://github.com/mvanduijker/laravel-mercure-broadcaster).
+
+- [Thore Sünert](https://github.com/thoresuenert)
 - [Mark van Duijker](https://github.com/mvanduijker)
 - [Kévin Dunglas](https://github.com/dunglas)
 - [All Contributors](../../contributors)

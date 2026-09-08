@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace Suenerds\LaravelMercureBroadcaster\Tests\Support;
 
-use Illuminate\Broadcasting\Channel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
+use Suenerds\LaravelMercureBroadcaster\Broadcasting\PrivateChannel;
 
-class ExampleChannelEvent implements ShouldBroadcastNow
+class ExamplePackagePrivateChannelEvent implements ShouldBroadcastNow
 {
     public $property;
 
@@ -18,8 +18,6 @@ class ExampleChannelEvent implements ShouldBroadcastNow
 
     public function broadcastOn()
     {
-        return new Channel(
-            'http://example/channel-event',
-        );
+        return new PrivateChannel('http://example/package-private');
     }
 }

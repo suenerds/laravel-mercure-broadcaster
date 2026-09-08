@@ -1,22 +1,26 @@
-<?php declare(strict_types = 1);
+<?php
 
-namespace Duijker\LaravelMercureBroadcaster\Tests\Feature;
+declare(strict_types=1);
 
-use Duijker\LaravelMercureBroadcaster\Tests\Support\ExampleChannelEvent;
-use Duijker\LaravelMercureBroadcaster\Tests\Support\ExampleEvent;
-use Duijker\LaravelMercureBroadcaster\Tests\Support\ExamplePrivateChannelEvent;
-use Duijker\LaravelMercureBroadcaster\Tests\TestCase;
+namespace Suenerds\LaravelMercureBroadcaster\Tests\Feature;
+
 use PHPUnit\Framework\Attributes\After;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\Group;
+use Suenerds\LaravelMercureBroadcaster\Tests\Support\ExampleChannelEvent;
+use Suenerds\LaravelMercureBroadcaster\Tests\Support\ExampleEvent;
+use Suenerds\LaravelMercureBroadcaster\Tests\Support\ExamplePrivateChannelEvent;
+use Suenerds\LaravelMercureBroadcaster\Tests\TestCase;
 use Symfony\Component\Process\Process;
 
+/**
+ * End-to-end test against a real Mercure hub; requires a running Docker daemon.
+ */
+#[Group('docker')]
 class BroadcasterTest extends TestCase
 {
     private $mercureDockerContainerId;
 
-    /**
-     * @dataProvider supportedMercureVersionsDataProvider
-     */
     #[DataProvider('supportedMercureVersionsDataProvider')]
     public function test_it_broadcasts($mercureVersion, $event)
     {
@@ -55,9 +59,9 @@ class BroadcasterTest extends TestCase
                     ->mustRun()
                     ->getErrorOutput();
 
-                if (!$matcher($output)) {
+                if (! $matcher($output)) {
                     throw new \Exception($output);
-                };
+                }
 
                 return true;
             }, 100);
@@ -66,11 +70,9 @@ class BroadcasterTest extends TestCase
             dump($exception->getMessage());
         }
 
-
         $this->assertTrue($result);
     }
 
-    /** before */
     public function startMercureServer($version)
     {
         $command = "docker run -e SERVER_NAME=':80' -e MERCURE_PUBLISHER_JWT_KEY='bfaf06ec-ac9d-11ed-a49f-6bc3bc0854c9' -e MERCURE_SUBSCRIBER_JWT_KEY='bfaf06ec-ac9d-11ed-a49f-6bc3bc0854c9' -d -p 3000:80 dunglas/mercure:$version";
@@ -82,7 +84,6 @@ class BroadcasterTest extends TestCase
         sleep(1);
     }
 
-    /** @after */
     #[After]
     public function stopMercureServer(): void
     {

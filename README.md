@@ -15,9 +15,6 @@ Laravel broadcaster for [Mercure](https://github.com/dunglas/mercure) for doing 
 
 Requires PHP 8.3+ and Laravel 10 or newer.
 
-Make sure you have installed [Mercure](https://github.com/dunglas/mercure) and have it running. Check their docs how to
-do it. (It's pretty easy)
-
 Install the package via Composer:
 
 ```
@@ -177,17 +174,6 @@ Broadcast::channel('http://example/user/{id}/direct-messages', function ($user, 
 });
 ```
 
-Then register a route for the authorization endpoint:
-
-```php
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Broadcast;
-use Illuminate\Support\Facades\Route;
-
-Route::get('/broadcasting/auth', fn (Request $request) => Broadcast::driver('mercure')->auth($request))
-    ->middleware(['web', 'auth']);
-```
-
 The endpoint accepts the requested channels as a `channels[]` array or a comma-separated
 `channels` query string. It authorizes each channel, then responds with a redirect to the
 hub's public URL (with a `topic` parameter per channel) and sets a `mercureAuthorization`
@@ -203,14 +189,18 @@ es.addEventListener('direct-message.created', (messageEvent) => {
 });
 ```
 
-Two things to watch out for:
-
-- Because Laravel encrypts cookies by default, add an
+Because Laravel encrypts cookies by default, add an
   [exception](https://laravel.com/docs/master/responses#cookies-and-encryption) for the
   `mercureAuthorization` cookie in your cookie encryption configuration.
-- The cookie can only be set when the hub's public URL shares a second-level domain with
-  your app (e.g. `app.example.com` and `mercure.example.com`). With the hub on an
-  unrelated domain, the underlying Symfony component refuses to create the cookie.
+```php
+    ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->encryptCookies(except: ['mercureAuthorization']);
+    })
+```
+
+The cookie can only be set when the hub's public URL shares a second-level domain with
+your app (e.g. `app.example.com` and `mercure.example.com`). With the hub on an
+unrelated domain, the underlying Symfony component refuses to create the cookie.
 
 ### Advanced usage
 
